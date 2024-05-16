@@ -136,15 +136,15 @@ Termination request received, input Ctrl+C again to finalize shutdown...
     let mut data_buffer = vec![MessagePayload::default(); MAX_MESSAGES];
     let mut data_buffer_iter = data_buffer.iter_mut();
 
-    let mut msgs: VecDeque<MessagePayload> = VecDeque::new();
+    let mut msgs: Vec<MessagePayload> = Vec::new();
 
     // Predefined messages to run on startup
     // Note: Order of execution is not guranteed
-    msgs.push_back(MessagePayload::new(0, 69, 0, 0, 0, VectorClock::new(size)));
+    msgs.push(MessagePayload::new(0, 69, 0, 0, 0, VectorClock::new(size)));
 
-    msgs.push_back(MessagePayload::new(0, 420, 1, 1, 1, VectorClock::new(size)));
+    msgs.push(MessagePayload::new(0, 420, 0, 0, 0, VectorClock::new(size)));
 
-    msgs.push_back(MessagePayload::new(3, 0, 2, 2, 2, VectorClock::new(size)));
+    //msgs.push(MessagePayload::new(3, 0, 2, 2, 2, VectorClock::new(size)));
 
     loop {
         if let Some(recv_buf) = data_buffer_iter.next() {
@@ -168,7 +168,7 @@ Termination request received, input Ctrl+C again to finalize shutdown...
 
                             process_data.message_history.push(*result);
                             for msg in process_data.execute_locally(*result) {
-                                msgs.push_back(msg);
+                                msgs.push(msg);
                             }
                             break; // exit only when a receive has been processed
                         }
@@ -176,13 +176,26 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                         _ => {
                             while let Ok(data) = rx.try_recv() {
                                 // Echo or process the message further, here we just send to the next process in a simple ring
-                                msgs.push_back(data);
+                                msgs.push(data);
                             }
                             // Send all avaliable messages to allow for any order receive
-                            while !msgs.is_empty() {
-                                let message = msgs.pop_front().unwrap();
-                                if message.sender == rank {
-                                    world.process_at_rank(message.receiver).send(&message);
+
+                            let mut i = 0;
+                            while i < msgs.len() {
+                                if msgs[i].sender == rank
+                                    && !(msgs[i].message == 0 && process_data.locked)
+                                {
+                                    if msgs[i].message == 0 {
+                                        process_data.locked = true;
+                                    }
+                                    // Send the message to its intended receiver
+                                    world.process_at_rank(msgs[i].receiver).send(&msgs[i]);
+
+                                    // Remove the message from the list after processing
+                                    msgs.remove(i);
+                                } else {
+                                    // Increment the index only if you didn't remove the current item
+                                    i += 1;
                                 }
                             }
                         }

@@ -12,6 +12,7 @@ pub struct ProcessData {
     pub message_buffer: Vec<MessagePayload>,
     pub message_history: Vec<MessagePayload>,
     pub local_queue: VecDeque<(i32, Rank, VectorClock)>,
+    pub locked: bool,
 }
 
 impl ProcessData {
@@ -25,6 +26,7 @@ impl ProcessData {
             message_buffer: vec![MessagePayload::with_msg(-1); size as usize],
             message_history: Vec::new(),
             local_queue: VecDeque::new(),
+            locked: false,
         }
     }
 
@@ -131,6 +133,7 @@ impl ProcessData {
                         self.rank, self.local_queue
                     ); // TODO make actual return
                        // system
+                    self.locked = false;
                 }
                 messages_to_send
             }
