@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 mpi = { version = "0.8.0", features = ["user-operations", "derive"] }
 memoffset = "0.9.1"
+ctrlc = "3.4.4"

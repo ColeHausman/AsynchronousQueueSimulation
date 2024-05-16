@@ -1,24 +1,20 @@
 use message_payload::MessagePayload;
-use mpi::ffi::QMPI_Mprobe;
-use mpi::request::scope;
-use mpi::request::{Request, RequestCollection, Scope};
 use mpi::traits::*;
-use mpi::Rank;
-use mpi::Threading;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 
 use crate::message_payload::VectorClock;
 use crate::process_data::ProcessData;
+extern crate ctrlc;
 mod message_payload;
 mod process_data;
 
-fn handle_client(mut stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank: i32) {
+fn handle_client(stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank: i32) {
     let mut reader = BufReader::new(stream.try_clone().expect("Failed to clone stream"));
     let mut line = String::new();
 
@@ -105,7 +101,27 @@ fn main() {
     let size = world.size();
     let rank = world.rank();
 
-    let base_port = 7878; // Base port number
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    // Set up signal handler for Ctrl+C
+    ctrlc::set_handler(move || {
+        if rank == 0 {
+            println!(
+                r#"
+=====================================================================
+
+Termination request received, input Ctrl+C again to finalize shutdown...
+
+=====================================================================
+                "#
+            );
+        }
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl+C handler");
+
+    let base_port = 8000; // Base port number
     let port = base_port + rank as u16; // Unique port for each process
 
     let (tx, rx): (
@@ -138,7 +154,6 @@ fn main() {
     ));
 
     loop {
-        // Process non-blocking receives
         if let Some(recv_buf) = data_buffer_iter.next() {
             // Initiate non-blocking receives within a scope
             mpi::request::multiple_scope(1, |scope, coll| {
@@ -146,7 +161,7 @@ fn main() {
                 coll.add(request);
 
                 loop {
-                    // Non-blocking check for completion from `coll`
+                    // Check for ready receives
                     match coll.test_any() {
                         Some((_, status, result)) => {
                             // Handle the completion here
@@ -158,14 +173,15 @@ fn main() {
                             );
                             gen_buffer.push(result);
                             process_data.message_buffer[0] = process_data.execute_locally(*result);
-                            break;
+                            break; // exit only when a receive has been processed
                         }
+                        // While waiting for receives, try for external messages
                         _ => {
                             while let Ok(data) = rx.try_recv() {
                                 // Echo or process the message further, here we just send to the next process in a simple ring
                                 msgs.push_back((data.0, data.1, data.2));
-                                println!("{:?}", msgs);
                             }
+                            // Send all avaliable messages to allow for any order receive
                             while !msgs.is_empty() {
                                 let message = msgs.pop_front().unwrap();
                                 if message.0 == rank {
