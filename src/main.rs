@@ -16,7 +16,7 @@ mod process_data;
 
 const MAX_MESSAGES: usize = 1024;
 
-fn handle_client(stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank: i32) {
+fn handle_client(stream: TcpStream, tx: Sender<MessagePayload>, rank: i32) {
     let mut reader = BufReader::new(stream.try_clone().expect("Failed to clone stream"));
     let mut line = String::new();
 
@@ -29,8 +29,8 @@ fn handle_client(stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank
             Ok(_) => {
                 println!("Process {} received: {}", rank, line.trim());
                 // Attempt to parse the message
-                if let Some(message_tuple) = parse_message(&line) {
-                    tx.send(message_tuple)
+                if let Some(message) = parse_message(&line) {
+                    tx.send(message)
                         .expect("Failed to send parsed message to MPI thread");
                 } else {
                     println!("Failed to parse message at process {}: {}", rank, line);
@@ -44,11 +44,7 @@ fn handle_client(stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank
     }
 }
 
-fn start_server(
-    port: u16,
-    tx: Sender<(i32, i32, MessagePayload)>,
-    rank: i32,
-) -> std::io::Result<()> {
+fn start_server(port: u16, tx: Sender<MessagePayload>, rank: i32) -> std::io::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", port))?;
     println!("Process {} server listening on port {}", rank, port);
 
@@ -68,7 +64,7 @@ fn start_server(
     Ok(())
 }
 
-fn parse_message(input: &str) -> Option<(i32, i32, MessagePayload)> {
+fn parse_message(input: &str) -> Option<MessagePayload> {
     let mut process = None;
     let mut op = None;
     let mut val = None;
@@ -85,10 +81,13 @@ fn parse_message(input: &str) -> Option<(i32, i32, MessagePayload)> {
     }
 
     if let (Some(process), Some(op), Some(val)) = (process, op, val) {
-        Some((
+        Some(MessagePayload::new(
+            op,
+            val,
             process,
             process,
-            MessagePayload::new(op, val, process, process, VectorClock::default()),
+            process,
+            VectorClock::default(),
         ))
     } else {
         None
@@ -125,10 +124,7 @@ Termination request received, input Ctrl+C again to finalize shutdown...
     let base_port = 8000; // Base port number
     let port = base_port + rank as u16; // Unique port for each process
 
-    let (tx, rx): (
-        Sender<(i32, i32, MessagePayload)>,
-        Receiver<(i32, i32, MessagePayload)>,
-    ) = mpsc::channel();
+    let (tx, rx): (Sender<MessagePayload>, Receiver<MessagePayload>) = mpsc::channel();
 
     // Start the server in a separate thread for each MPI process
     let tx_clone = tx.clone();
@@ -140,21 +136,15 @@ Termination request received, input Ctrl+C again to finalize shutdown...
     let mut data_buffer = vec![MessagePayload::default(); MAX_MESSAGES];
     let mut data_buffer_iter = data_buffer.iter_mut();
 
-    let mut msgs: VecDeque<(i32, i32, MessagePayload)> = VecDeque::new();
+    let mut msgs: VecDeque<MessagePayload> = VecDeque::new();
 
     // Predefined messages to run on startup
     // Note: Order of execution is not guranteed
-    msgs.push_back((
-        0,
-        0,
-        MessagePayload::new(0, 69, 0, 0, VectorClock::new(size)),
-    ));
+    msgs.push_back(MessagePayload::new(0, 69, 0, 0, 0, VectorClock::new(size)));
 
-    msgs.push_back((
-        1,
-        1,
-        MessagePayload::new(0, 420, 1, 1, VectorClock::new(size)),
-    ));
+    msgs.push_back(MessagePayload::new(0, 420, 1, 1, 1, VectorClock::new(size)));
+
+    msgs.push_back(MessagePayload::new(3, 0, 2, 2, 2, VectorClock::new(size)));
 
     loop {
         if let Some(recv_buf) = data_buffer_iter.next() {
@@ -168,12 +158,14 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                     match coll.test_any() {
                         Some((_, status, result)) => {
                             // Handle the completion here
+
                             println!(
                                 "Process {} received {:?} from process {}",
                                 rank,
                                 result,
                                 status.source_rank(),
                             );
+
                             process_data.message_history.push(*result);
                             for msg in process_data.execute_locally(*result) {
                                 msgs.push_back(msg);
@@ -184,19 +176,19 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                         _ => {
                             while let Ok(data) = rx.try_recv() {
                                 // Echo or process the message further, here we just send to the next process in a simple ring
-                                msgs.push_back((data.0, data.1, data.2));
+                                msgs.push_back(data);
                             }
                             // Send all avaliable messages to allow for any order receive
                             while !msgs.is_empty() {
                                 let message = msgs.pop_front().unwrap();
-                                if message.0 == rank {
-                                    world.process_at_rank(message.1).send(&message.2);
+                                if message.sender == rank {
+                                    world.process_at_rank(message.receiver).send(&message);
                                 }
                             }
                         }
                     }
                     // Short delay to prevent busy waiting (can be adjusted)
-                    thread::sleep(std::time::Duration::from_millis(10));
+                    //thread::sleep(std::time::Duration::from_millis(10));
                 }
             });
         }

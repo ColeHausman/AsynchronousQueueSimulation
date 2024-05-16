@@ -48,6 +48,12 @@ impl ProcessData {
             .unwrap_or(self.local_queue.len())
     }
 
+    fn contains_timestamp(&self, target: &VectorClock) -> bool {
+        self.pending_dequeues
+            .iter()
+            .any(|conf_list| conf_list.ts.clock == target.clock)
+    }
+
     pub fn ordered_insert(&mut self, value: (i32, Rank, VectorClock)) {
         let position = self.find_insert_position(&value.2);
         self.local_queue.insert(position, value);
@@ -71,26 +77,24 @@ impl ProcessData {
         }
     }
 
-    pub fn execute_locally(
-        &mut self,
-        message_payload: MessagePayload,
-    ) -> Vec<(i32, i32, MessagePayload)> {
-        let mut messages_to_send: Vec<(i32, i32, MessagePayload)> = Vec::new();
+    pub fn execute_locally(&mut self, message_payload: MessagePayload) -> Vec<MessagePayload> {
+        let mut messages_to_send: Vec<MessagePayload> = Vec::new();
 
         match message_payload.message {
             0 => {
                 // EnqInvoke
                 self.enq_count = 0;
                 self.increment_ts();
-                let message_to_send: MessagePayload = MessagePayload::new(
-                    1,
-                    message_payload.value,
-                    message_payload.invoker,
-                    self.rank,
-                    self.timestamp,
-                );
                 for recv_rank in 0..self.world_size {
-                    messages_to_send.push((self.rank, recv_rank, message_to_send));
+                    let message_to_send: MessagePayload = MessagePayload::new(
+                        1,
+                        message_payload.value,
+                        message_payload.invoker,
+                        self.rank,
+                        recv_rank,
+                        self.timestamp,
+                    );
+                    messages_to_send.push(message_to_send);
                 }
                 messages_to_send
             }
@@ -112,9 +116,10 @@ impl ProcessData {
                     message_payload.value,
                     message_payload.invoker,
                     self.rank,
+                    message_payload.invoker,
                     self.timestamp,
                 );
-                messages_to_send.push((self.rank, message_payload.invoker, message_to_send));
+                messages_to_send.push(message_to_send);
                 messages_to_send
             }
             2 => {
@@ -126,6 +131,42 @@ impl ProcessData {
                         self.rank, self.local_queue
                     ); // TODO make actual return
                        // system
+                }
+                messages_to_send
+            }
+            3 => {
+                self.increment_ts();
+
+                for recv_rank in 0..self.world_size {
+                    let message_to_send: MessagePayload =
+                        MessagePayload::new(4, 0, self.rank, self.rank, recv_rank, self.timestamp);
+                    messages_to_send.push(message_to_send);
+                }
+                messages_to_send
+            }
+            4 => {
+                self.update_ts(&message_payload.time_stamp);
+                if !self.contains_timestamp(&message_payload.time_stamp) {
+                    let insert_pos = self.find_insert_position(&message_payload.time_stamp);
+                    self.pending_dequeues.insert(
+                        insert_pos,
+                        ConfirmationList::new(
+                            self.world_size,
+                            message_payload.time_stamp,
+                            message_payload.invoker,
+                        ),
+                    );
+                }
+                for recv_rank in 0..self.world_size {
+                    let message_to_send: MessagePayload = MessagePayload::new(
+                        5,
+                        0,
+                        message_payload.invoker,
+                        self.rank,
+                        recv_rank,
+                        message_payload.time_stamp,
+                    );
+                    messages_to_send.push(message_to_send);
                 }
                 messages_to_send
             }

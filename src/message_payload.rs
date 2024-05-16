@@ -1,6 +1,6 @@
 use memoffset::offset_of;
 use mpi::datatype::{Equivalence, UserDatatype};
-use mpi::{Address, Count, Rank};
+use mpi::Rank;
 use std::cmp::Ordering;
 use std::mem::size_of;
 use std::{fmt, usize};
@@ -28,19 +28,6 @@ impl VectorClock {
             }
         }
         Ordering::Equal
-    }
-
-    pub fn modify(&mut self) {
-        self.clock[0] = 69;
-        self.clock[1] = 30;
-        self.clock[2] = 15;
-        self.clock[3] = 8;
-        self.clock[4] = 10;
-        self.clock[5] = 11;
-        self.clock[6] = 18;
-        self.clock[7] = 20;
-        self.clock[8] = 32;
-        self.clock[9] = 24;
     }
 }
 
@@ -111,16 +98,25 @@ pub(crate) struct MessagePayload {
     pub message: i32,
     pub invoker: Rank,
     pub sender: Rank,
+    pub receiver: Rank,
     pub time_stamp: VectorClock,
 }
 
 impl MessagePayload {
-    pub fn new(msg: i32, val: i32, inv: Rank, sender: Rank, ts: VectorClock) -> Self {
+    pub fn new(
+        msg: i32,
+        val: i32,
+        inv: Rank,
+        sender: Rank,
+        receiver: Rank,
+        ts: VectorClock,
+    ) -> Self {
         MessagePayload {
             message: msg,
             value: val,
             invoker: inv,
             sender: sender,
+            receiver: receiver,
             time_stamp: ts,
         }
     }
@@ -131,6 +127,7 @@ impl MessagePayload {
             value: -1,
             invoker: -1,
             sender: -1,
+            receiver: -1,
             time_stamp: VectorClock::default(),
         }
     }
@@ -145,17 +142,19 @@ unsafe impl Equivalence for MessagePayload {
             offset_of!(MessagePayload, value) as mpi::Address,
             offset_of!(MessagePayload, invoker) as mpi::Address,
             offset_of!(MessagePayload, sender) as mpi::Address,
+            offset_of!(MessagePayload, receiver) as mpi::Address,
             offset_of!(MessagePayload, time_stamp) as mpi::Address,
         ];
 
         UserDatatype::structured(
-            &[1, 1, 1, 1, 1], // One block of each type
+            &[1, 1, 1, 1, 1, 1], // One block of each type
             &displacements,
             &[
                 i32::equivalent_datatype(),                  // Datatype for message
                 i32::equivalent_datatype(),                  // Datatype for value
                 Rank::equivalent_datatype(),                 // Datatype for invoker
                 Rank::equivalent_datatype(),                 // Datatype for sender
+                Rank::equivalent_datatype(),                 // Datatype for receiver
                 VectorClock::equivalent_datatype().as_ref(), // Datatype for time_stamp
             ],
         )
