@@ -144,7 +144,7 @@ Termination request received, input Ctrl+C again to finalize shutdown...
 
     msgs.push(MessagePayload::new(0, 420, 0, 0, 0, VectorClock::new(size)));
 
-    //msgs.push(MessagePayload::new(3, 0, 2, 2, 2, VectorClock::new(size)));
+    msgs.push(MessagePayload::new(3, 0, 1, 1, 1, process_data.timestamp));
 
     loop {
         if let Some(recv_buf) = data_buffer_iter.next() {
@@ -185,7 +185,7 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                                 if msgs[i].sender == rank
                                     && !(msgs[i].message == 0 && process_data.locked)
                                 {
-                                    if msgs[i].message == 0 {
+                                    if msgs[i].message == 0 || msgs[i].message == 3 {
                                         process_data.locked = true;
                                     }
                                     // Send the message to its intended receiver
@@ -194,7 +194,7 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                                     // Remove the message from the list after processing
                                     msgs.remove(i);
                                 } else {
-                                    // Increment the index only if you didn't remove the current item
+                                    // Skip message if current process is currently executing its own enq/deq
                                     i += 1;
                                 }
                             }

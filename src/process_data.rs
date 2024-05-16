@@ -1,4 +1,5 @@
 use mpi::Rank;
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 use crate::message_payload::{MessagePayload, VectorClock};
@@ -61,6 +62,34 @@ impl ProcessData {
         self.local_queue.insert(position, value);
     }
 
+    pub fn dequeue(&mut self, ts: VectorClock) -> Option<(i32, Rank, VectorClock)> {
+        let mut oldest_index = None;
+        let mut oldest_timestamp: Option<&VectorClock> = None;
+
+        for (index, element) in self.local_queue.iter().enumerate() {
+            if &element.2 < &ts {
+                if oldest_timestamp.is_none() || &element.2 < oldest_timestamp.unwrap() {
+                    oldest_index = Some(index);
+                    oldest_timestamp = Some(&element.2);
+                }
+            }
+        }
+
+        if let Some(index) = oldest_index {
+            self.local_queue.remove(index)
+        } else {
+            None
+        }
+    }
+
+    pub fn insert_by_ts(&mut self, new_cl: ConfirmationList) {
+        let pos = self
+            .pending_dequeues
+            .binary_search_by(|cl| cl.ts.compare(&new_cl.ts))
+            .unwrap_or_else(|e| e);
+        self.pending_dequeues.insert(pos, new_cl);
+    }
+
     pub fn propagate_earlier_responses(&mut self) {
         for row in (1..self.pending_dequeues.len()).rev() {
             for col in 0..self.pending_dequeues[0].response_buffer.len() {
@@ -84,7 +113,7 @@ impl ProcessData {
 
         match message_payload.message {
             0 => {
-                // EnqInvoke
+                // Enq invoke
                 self.enq_count = 0;
                 self.increment_ts();
                 for recv_rank in 0..self.world_size {
@@ -101,7 +130,7 @@ impl ProcessData {
                 messages_to_send
             }
             1 => {
-                // Receive EnqRequest
+                // Receive EnqReq
                 self.update_ts(&message_payload.time_stamp);
                 self.ordered_insert((
                     message_payload.value,
@@ -125,7 +154,7 @@ impl ProcessData {
                 messages_to_send
             }
             2 => {
-                // Enq ack
+                // Receive EnqAck
                 self.enq_count += 1;
                 if self.enq_count == self.world_size {
                     println!(
@@ -138,8 +167,8 @@ impl ProcessData {
                 messages_to_send
             }
             3 => {
+                // Deq invoke
                 self.increment_ts();
-
                 for recv_rank in 0..self.world_size {
                     let message_to_send: MessagePayload =
                         MessagePayload::new(4, 0, self.rank, self.rank, recv_rank, self.timestamp);
@@ -148,17 +177,14 @@ impl ProcessData {
                 messages_to_send
             }
             4 => {
+                // Receive DeqReq
                 self.update_ts(&message_payload.time_stamp);
                 if !self.contains_timestamp(&message_payload.time_stamp) {
-                    let insert_pos = self.find_insert_position(&message_payload.time_stamp);
-                    self.pending_dequeues.insert(
-                        insert_pos,
-                        ConfirmationList::new(
-                            self.world_size,
-                            message_payload.time_stamp,
-                            message_payload.invoker,
-                        ),
-                    );
+                    self.insert_by_ts(ConfirmationList::new(
+                        self.world_size,
+                        message_payload.time_stamp,
+                        message_payload.invoker,
+                    ));
                 }
                 for recv_rank in 0..self.world_size {
                     let message_to_send: MessagePayload = MessagePayload::new(
@@ -170,6 +196,44 @@ impl ProcessData {
                         message_payload.time_stamp,
                     );
                     messages_to_send.push(message_to_send);
+                }
+                messages_to_send
+            }
+            5 => {
+                // Receive DeqAck
+                if !self.contains_timestamp(&message_payload.time_stamp) {
+                    self.insert_by_ts(ConfirmationList::new(
+                        self.world_size,
+                        message_payload.time_stamp,
+                        message_payload.invoker,
+                    ));
+                }
+                for cl in self.pending_dequeues.iter_mut() {
+                    if cl.ts == message_payload.time_stamp {
+                        cl.response_buffer[message_payload.sender as usize] = 1;
+                        self.propagate_earlier_responses();
+                        break;
+                    }
+                }
+                let mut i = 0;
+                while i < self.pending_dequeues.len() {
+                    if self.pending_dequeues[i].is_full() && !self.pending_dequeues[i].handled {
+                        let ret: i32;
+
+                        match self.dequeue(message_payload.time_stamp) {
+                            Some((val, _, _)) => {
+                                ret = val;
+                            }
+                            _ => {
+                                ret = -1;
+                            }
+                        }
+                        self.pending_dequeues[i].handled = true;
+                        if self.rank == message_payload.invoker {
+                            println!("Process{} dequeued {}", self.rank, ret);
+                        }
+                    }
+                    i += 1;
                 }
                 messages_to_send
             }
@@ -194,5 +258,9 @@ impl ConfirmationList {
             invoker: deq_invoker,
             handled: false,
         }
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.response_buffer.iter().all(|&x| x == 1)
     }
 }
