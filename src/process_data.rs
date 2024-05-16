@@ -1,7 +1,4 @@
-use mpi::request::{RequestCollection, Scope};
-use mpi::traits::*;
 use mpi::Rank;
-use std::cmp::max;
 use std::collections::VecDeque;
 
 use crate::message_payload::{MessagePayload, VectorClock};
@@ -74,19 +71,28 @@ impl ProcessData {
         }
     }
 
-    pub fn execute_locally(&mut self, message_payload: MessagePayload) -> MessagePayload {
+    pub fn execute_locally(
+        &mut self,
+        message_payload: MessagePayload,
+    ) -> Vec<(i32, i32, MessagePayload)> {
+        let mut messages_to_send: Vec<(i32, i32, MessagePayload)> = Vec::new();
+
         match message_payload.message {
             0 => {
                 // EnqInvoke
                 self.enq_count = 0;
                 self.increment_ts();
-                MessagePayload::new(
+                let message_to_send: MessagePayload = MessagePayload::new(
                     1,
                     message_payload.value,
-                    self.rank,
+                    message_payload.invoker,
                     self.rank,
                     self.timestamp,
-                )
+                );
+                for recv_rank in 0..self.world_size {
+                    messages_to_send.push((self.rank, recv_rank, message_to_send));
+                }
+                messages_to_send
             }
             1 => {
                 // Receive EnqRequest
@@ -101,46 +107,30 @@ impl ProcessData {
                         confirmation_list.response_buffer[message_payload.invoker as usize] = 1;
                     }
                 }
-                MessagePayload::new(
+                let message_to_send: MessagePayload = MessagePayload::new(
                     2,
                     message_payload.value,
                     message_payload.invoker,
                     self.rank,
                     self.timestamp,
-                )
+                );
+                messages_to_send.push((self.rank, message_payload.invoker, message_to_send));
+                messages_to_send
             }
             2 => {
                 // Enq ack
                 self.enq_count += 1;
                 if self.enq_count == self.world_size {
-                    println!("Process{} done enqueueing!", self.rank); // TODO make actual return
-                                                                       // system
+                    println!(
+                        "Process{} done enqueueing! Current local queue: {:?}",
+                        self.rank, self.local_queue
+                    ); // TODO make actual return
+                       // system
                 }
-                MessagePayload::new(-1, 0, 0, 0, VectorClock::default())
+                messages_to_send
             }
-            _ => MessagePayload::default(),
+            _ => messages_to_send,
         }
-    }
-
-    pub fn generate_messages(&self) -> Vec<(i32, i32, MessagePayload)> {
-        let mut gen_messages: Vec<(i32, i32, MessagePayload)> = Vec::new();
-        let invoker = self.message_buffer[0].invoker;
-        let message = self.message_buffer[0].message;
-        match message {
-            1 => {
-                let message_payload = self.message_buffer[0];
-                for recv_rank in 0..self.world_size {
-                    gen_messages.push((self.rank, recv_rank, message_payload));
-                }
-            }
-            2 => {
-                let message_payload = self.message_buffer[0];
-
-                gen_messages.push((self.rank, invoker, message_payload));
-            }
-            _ => {}
-        }
-        gen_messages
     }
 }
 

@@ -14,6 +14,8 @@ extern crate ctrlc;
 mod message_payload;
 mod process_data;
 
+const MAX_MESSAGES: usize = 1024;
+
 fn handle_client(stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank: i32) {
     let mut reader = BufReader::new(stream.try_clone().expect("Failed to clone stream"));
     let mut line = String::new();
@@ -22,7 +24,6 @@ fn handle_client(stream: TcpStream, tx: Sender<(i32, i32, MessagePayload)>, rank
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => {
-                println!("Client disconnected from process {}", rank);
                 break;
             }
             Ok(_) => {
@@ -136,11 +137,13 @@ Termination request received, input Ctrl+C again to finalize shutdown...
     });
 
     let mut process_data = ProcessData::new(rank, world.size());
-    let mut data_buffer = vec![MessagePayload::default(); 100];
-    let mut gen_buffer = Vec::new();
+    let mut data_buffer = vec![MessagePayload::default(); MAX_MESSAGES];
     let mut data_buffer_iter = data_buffer.iter_mut();
 
     let mut msgs: VecDeque<(i32, i32, MessagePayload)> = VecDeque::new();
+
+    // Predefined messages to run on startup
+    // Note: Order of execution is not guranteed
     msgs.push_back((
         0,
         0,
@@ -171,8 +174,10 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                                 result,
                                 status.source_rank(),
                             );
-                            gen_buffer.push(result);
-                            process_data.message_buffer[0] = process_data.execute_locally(*result);
+                            process_data.message_history.push(*result);
+                            for msg in process_data.execute_locally(*result) {
+                                msgs.push_back(msg);
+                            }
                             break; // exit only when a receive has been processed
                         }
                         // While waiting for receives, try for external messages
@@ -190,13 +195,10 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                             }
                         }
                     }
+                    // Short delay to prevent busy waiting (can be adjusted)
+                    thread::sleep(std::time::Duration::from_millis(10));
                 }
             });
-        }
-
-        // Generate new messages
-        for msg in process_data.generate_messages() {
-            msgs.push_back(msg);
         }
     }
 }
