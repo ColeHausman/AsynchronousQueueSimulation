@@ -235,6 +235,7 @@ impl ProcessData {
                     }
                     i += 1;
                 }
+                self.locked = false;
                 messages_to_send
             }
             _ => messages_to_send,

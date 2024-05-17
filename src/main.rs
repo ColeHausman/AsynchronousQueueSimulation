@@ -30,6 +30,7 @@ fn handle_client(stream: TcpStream, tx: Sender<MessagePayload>, rank: i32) {
                 println!("Process {} received: {}", rank, line.trim());
                 // Attempt to parse the message
                 if let Some(message) = parse_message(&line) {
+                    println!("{:?}", message);
                     tx.send(message)
                         .expect("Failed to send parsed message to MPI thread");
                 } else {
@@ -101,6 +102,8 @@ fn main() {
     let size = world.size();
     let rank = world.rank();
 
+    let mut process_data = ProcessData::new(rank, world.size());
+
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
@@ -132,22 +135,25 @@ Termination request received, input Ctrl+C again to finalize shutdown...
         start_server(port, tx_clone, rank).unwrap();
     });
 
-    let mut process_data = ProcessData::new(rank, world.size());
-    let mut data_buffer = vec![MessagePayload::default(); MAX_MESSAGES];
-    let mut data_buffer_iter = data_buffer.iter_mut();
+    let mut dyn_data_buffer: Vec<MessagePayload> = Vec::new();
+    dyn_data_buffer.push(MessagePayload::default());
+    let mut current_index = 0;
 
     let mut msgs: Vec<MessagePayload> = Vec::new();
 
     // Predefined messages to run on startup
     // Note: Order of execution is not guranteed
-    msgs.push(MessagePayload::new(0, 69, 0, 0, 0, VectorClock::new(size)));
+    msgs.push(MessagePayload::new(0, 69, 0, 0, 0, process_data.timestamp));
 
-    msgs.push(MessagePayload::new(0, 420, 0, 0, 0, VectorClock::new(size)));
+    msgs.push(MessagePayload::new(0, 420, 0, 0, 0, process_data.timestamp));
 
     msgs.push(MessagePayload::new(3, 0, 1, 1, 1, process_data.timestamp));
 
+    msgs.push(MessagePayload::new(0, 70, 1, 1, 1, process_data.timestamp));
+
     loop {
-        if let Some(recv_buf) = data_buffer_iter.next() {
+        if current_index < dyn_data_buffer.len() {
+            let recv_buf = &mut dyn_data_buffer[current_index];
             // Initiate non-blocking receives within a scope
             mpi::request::multiple_scope(1, |scope, coll| {
                 let request = world.any_process().immediate_receive_into(scope, recv_buf);
@@ -204,6 +210,8 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                     //thread::sleep(std::time::Duration::from_millis(10));
                 }
             });
+            dyn_data_buffer.push(MessagePayload::default());
+            current_index += 1;
         }
     }
 }
