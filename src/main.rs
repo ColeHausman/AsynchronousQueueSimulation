@@ -1,6 +1,5 @@
 use message_payload::MessagePayload;
 use mpi::traits::*;
-use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,8 +12,6 @@ use crate::process_data::ProcessData;
 extern crate ctrlc;
 mod message_payload;
 mod process_data;
-
-const MAX_MESSAGES: usize = 1024;
 
 fn handle_client(stream: TcpStream, tx: Sender<MessagePayload>, rank: i32) {
     let mut reader = BufReader::new(stream.try_clone().expect("Failed to clone stream"));
@@ -102,7 +99,7 @@ fn main() {
     let size = world.size();
     let rank = world.rank();
 
-    let mut process_data = ProcessData::new(rank, world.size());
+    let mut process_data = ProcessData::new(rank, size);
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();

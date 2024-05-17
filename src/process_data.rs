@@ -1,5 +1,4 @@
 use mpi::Rank;
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 use crate::message_payload::{MessagePayload, VectorClock};
@@ -101,12 +100,15 @@ impl ProcessData {
         }
     }
 
+    /*
+    // For use in the relaxed version of this algorithm
     pub fn update_unsafes(&mut self, start_index: usize) {
         let invoker = self.pending_dequeues[start_index].invoker;
         for i in start_index..self.pending_dequeues.len() {
             self.pending_dequeues[i].response_buffer[invoker as usize] = 1;
         }
     }
+    */
 
     pub fn execute_locally(&mut self, message_payload: MessagePayload) -> Vec<MessagePayload> {
         let mut messages_to_send: Vec<MessagePayload> = Vec::new();
