@@ -8,7 +8,7 @@ Based on the work by Samuel Baldwin, Cole Hausman, Mohamed Bakr, and Edward Talm
 mpiexec -n <Num Processes> ./target/debug/async_queue
 ```
 ## Sending Queue Operations to Processes
-The simulator allows for external requests through the use of TCP servers for each process.\
+The simulator allows for external requests through the use of TCP.\
 Using whatever tool you prefer message requests can easily be sent to the process of your choice.\
 Here I use `netcat`:
 ```
