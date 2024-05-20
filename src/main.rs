@@ -109,11 +109,13 @@ fn main() {
         if rank == 0 {
             println!(
                 r#"
+
 =====================================================================
 
 Termination request received, input Ctrl+C again to finalize shutdown...
 
 =====================================================================
+
                 "#
             );
         }
@@ -139,7 +141,7 @@ Termination request received, input Ctrl+C again to finalize shutdown...
     let mut msgs: Vec<MessagePayload> = Vec::new();
 
     // Predefined messages to run on startup
-    // Note: Order of execution is not guranteed
+    // Note: Order of execution is not guaranteed
     msgs.push(MessagePayload::new(0, 69, 0, 0, 0, process_data.timestamp));
 
     msgs.push(MessagePayload::new(0, 420, 0, 0, 0, process_data.timestamp));
@@ -181,8 +183,8 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                                 // Echo or process the message further, here we just send to the next process in a simple ring
                                 msgs.push(data);
                             }
-                            // Send all avaliable messages to allow for any order receive
-
+                            // Send all avaliable messages, skipping invocations if a processes is
+                            // currently Enq/Deq
                             let mut i = 0;
                             while i < msgs.len() {
                                 if msgs[i].sender == rank
@@ -191,20 +193,16 @@ Termination request received, input Ctrl+C again to finalize shutdown...
                                     if msgs[i].message == 0 || msgs[i].message == 3 {
                                         process_data.locked = true;
                                     }
-                                    // Send the message to its intended receiver
                                     world.process_at_rank(msgs[i].receiver).send(&msgs[i]);
 
                                     // Remove the message from the list after processing
                                     msgs.remove(i);
                                 } else {
-                                    // Skip message if current process is currently executing its own enq/deq
                                     i += 1;
                                 }
                             }
                         }
                     }
-                    // Short delay to prevent busy waiting (can be adjusted)
-                    //thread::sleep(std::time::Duration::from_millis(10));
                 }
             });
             dyn_data_buffer.push(MessagePayload::default());
